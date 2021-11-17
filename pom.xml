@@ -18,23 +18,22 @@
 		
 		<!-- LOGGING -->
 			<!-- SLF4J -->
-			<slf4j.version>1.7.30</slf4j.version>
+			<slf4j.version>1.7.32</slf4j.version>
 			<!-- LOGBACK -->
-			<logback.version>1.2.3</logback.version>
+			<logback.version>1.2.7</logback.version>
 			
 		<!-- TESTING -->
 			<!-- JUNIT -->
-			<junit.version>5.7.1</junit.version>
+			<junit.version>5.8.1</junit.version>
 
 		<!-- MAVEN PLUGINS -->
-		<compiler-plugin.version>3.5.1</compiler-plugin.version>
-		<source-plugin.version>2.0.4</source-plugin.version>
-		<javadoc-plugin.version>2.3</javadoc-plugin.version>
+		<compiler-plugin.version>3.8.1</compiler-plugin.version>
+		<source-plugin.version>3.2.1</source-plugin.version>
+		<javadoc-plugin.version>3.3.1</javadoc-plugin.version>
 		<eclipse-plugin.version>2.10</eclipse-plugin.version>
 
 		<!-- JAVA VERSION -->
-		<java.source.version>1.8</java.source.version>
-		<java.target.version>1.8</java.target.version>
+		<java.version>17</java.version>
 		
 		<!-- PROJECT SETTINGS -->
 		<project.build.sourceEncoding>${gen-encoding}</project.build.sourceEncoding>
@@ -82,8 +81,7 @@
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${compiler-plugin.version}</version>
 				<configuration>
-					<source>${java.source.version}</source>
-					<target>${java.target.version}</target>
+					<release>${java.version}</release>
 					<encoding>${gen-encoding}</encoding>
 				</configuration>
 			</plugin>

@@ -19,10 +19,8 @@ public interface TelnetProcessor {
      * Allows processing incoming data and sending outgoing data to the
      * connected client.
      * <p>
-     * This is the <em>workhorse</em> method if you want to call it that. It
-     * is
-     * responsible for actually applying any logic based on the received
-     * inputs, and produce outputs.
+     * This is the <em>workhorse</em> method. It is responsible for actually
+     * applying any logic based on the received inputs, and produce outputs.
      * <p>
      * The implementation for an echo server for example, might simply read
      * the given inputstream and write it instantly to the outputstream again.

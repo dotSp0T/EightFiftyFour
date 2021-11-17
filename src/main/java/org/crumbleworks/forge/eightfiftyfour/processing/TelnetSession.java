@@ -2,6 +2,8 @@ package org.crumbleworks.forge.eightfiftyfour.processing;
 
 import java.net.InetAddress;
 
+//TODO [high] add method/flag to kill the session
+//TODO [medium] add IP/Domainname to which the client session was built up (if possible?)
 /**
  * Holds information about an established connection between server and
  * client. Additionally you can store your own data using the

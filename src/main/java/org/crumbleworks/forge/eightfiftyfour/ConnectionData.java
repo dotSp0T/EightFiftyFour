@@ -1,8 +1,8 @@
 package org.crumbleworks.forge.eightfiftyfour;
 
 import java.io.IOException;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.Pipe;
 
 import org.crumbleworks.forge.eightfiftyfour.processing.TelnetSession;
 
@@ -13,21 +13,22 @@ import org.crumbleworks.forge.eightfiftyfour.processing.TelnetSession;
  * @since 0.1.0
  */
 public final class ConnectionData {
+	private final static int DEFAULT_BUFFER_SIZE = 1024;
 
     protected final TelnetSession telSess;
 
-    protected final PipedInputStream incomingDataRead; // processor-task
-    protected final PipedOutputStream incomingDataWrite;
-
-    protected final PipedInputStream outgoingDataRead;
-    protected final PipedOutputStream outgoingDataWrite; // processor-task
+    
+    protected final Pipe incomingData = Pipe.open();
+    protected final ByteBuffer incomingBuffer = ByteBuffer.allocate(DEFAULT_BUFFER_SIZE);
+    protected final Pipe outgoingData = Pipe.open();
+    protected final ByteBuffer outgoingBuffer = ByteBuffer.allocate(DEFAULT_BUFFER_SIZE);
 
     public ConnectionData(TelnetSession telSess) throws IOException {
         this.telSess = telSess;
 
-        incomingDataRead = new PipedInputStream();
-        incomingDataWrite = new PipedOutputStream(incomingDataRead);
-        outgoingDataRead = new PipedInputStream();
-        outgoingDataWrite = new PipedOutputStream(outgoingDataRead);
+        incomingData.sink().configureBlocking(false);
+        incomingData.source().configureBlocking(false);
+        outgoingData.sink().configureBlocking(false);
+        outgoingData.source().configureBlocking(false);
     }
 }
