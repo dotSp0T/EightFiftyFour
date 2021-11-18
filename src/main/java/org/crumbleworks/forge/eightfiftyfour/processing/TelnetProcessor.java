@@ -9,11 +9,21 @@ import java.io.OutputStream;
  * <p>
  * An implementation of this class is the basis for the logic of your
  * telnet-server.
- *
+ * 
  * @author Michael Stocker
  * @since 0.1.0
  */
 public interface TelnetProcessor {
+
+    /**
+     * Allows setting up a new telnetsession. E.g. acquiring resources or
+     * loading any persistent state.
+     * 
+     * @param data
+     *            an information-object associated with the connection that is
+     *            currently being processed
+     */
+    default void setup(TelnetSession data) {}
 
     /**
      * Allows processing incoming data and sending outgoing data to the
@@ -52,4 +62,17 @@ public interface TelnetProcessor {
      *         which the next processing cycle should be started.
      */
     long process(InputStream in, OutputStream out, TelnetSession data);
+
+    /**
+     * Allows cleaning up a killed telnetsession. E.g. releasing resources or
+     * storing any persistent state.*
+     * 
+     * @param in
+     *            an {@link InputStream} holding any data received from the
+     *            other side of the connection
+     * @param data
+     *            an information-object associated with the connection that is
+     *            currently being processed
+     */
+    default void teardown(InputStream in, TelnetSession data) {}
 }

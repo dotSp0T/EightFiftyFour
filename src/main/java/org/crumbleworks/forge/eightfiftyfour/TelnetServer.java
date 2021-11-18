@@ -14,9 +14,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.crumbleworks.forge.eightfiftyfour.processing.TelnetProcessor;
@@ -24,23 +23,24 @@ import org.crumbleworks.forge.eightfiftyfour.processing.TelnetSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-//TODO [high] add code (and ctor param) for session timeout durations; duration after which a session will timeout if it has not received any data from the client
+// TODO [high] add code (and ctor param) for session timeout durations;
+// duration after which a session will timeout if it has not received any data
+// from the client
 /**
  * Each server instance handles incoming connections on any number of ports
  * given. A new worker-thread is spawned for each port the instance is
  * listening on, so to be able to quickly react to new connections.
  * <p>
  * Connections are then handled using NIO {@link SocketChannel}s with a
- * scheduler thread delegating input-processing tasks to a thread-pool which
- * can be further configured using the advanced constructors.
- *
+ * scheduler thread delegating processing tasks to a thread-pool which can be
+ * further configured using the advanced constructors.
+ * 
  * @author Michael Stocker
  * @since 0.1.0
  */
 public class TelnetServer implements Closeable {
 
-    public static final int DEFAULT_NUM_WORKERS_PER_PORT = 5;
-    public static final int DEFAULT_WORKER_IDLING_THRESHOLD_IN_MILLISECONDS = 500;
+    public static final int DEFAULT_NUM_WORKERS_PER_PORT = 3;
 
     public static final String SOCKET_THREAD_NAME = "Telnet:";
     public static final String SCHEDULER_THREAD_NAME = "Telnet-Scheduler";
@@ -49,17 +49,15 @@ public class TelnetServer implements Closeable {
             .getLogger(TelnetServer.class);
 
     private final int[] ports;
-    private final ExecutorService threadpool;
+    private final ScheduledExecutorService threadpool;
     private final TelnetProcessor procImpl;
+
     private Map<ServerSocketChannel, Thread> serverSockets;
+    private Thread schedulerThread;
 
     private final Selector connectionSelector;
 
     /**
-     * Assigns at most <code>ports *</code>
-     * {@link #DEFAULT_NUM_WORKERS_PER_PORT} worker-threads for connection
-     * handling.
-     * 
      * @param ports
      *            a list of ports the server is supposed to handle
      * @param procImpl
@@ -77,42 +75,15 @@ public class TelnetServer implements Closeable {
      *            a list of ports the server is supposed to handle
      * @param procImpl
      *            the {@link TelnetProcessor} responsible for server-logic
-     * @param workers
-     *            the maximal amount of worker-threads used to handle
-     *            connections
-     * @throws ServerSetupException
-     *             any of the given ports fail to establish a
-     *             socket-connection
-     */
-    public TelnetServer(int[] ports, TelnetProcessor procImpl, int workers) {
-        this(ports, procImpl, ports.length,
-                ports.length * DEFAULT_NUM_WORKERS_PER_PORT,
-                DEFAULT_WORKER_IDLING_THRESHOLD_IN_MILLISECONDS);
-    }
-
-    /**
-     * @param ports
-     *            a list of ports the server is supposed to handle
-     * @param procImpl
-     *            the {@link TelnetProcessor} responsible for server-logic
-     * @param minworkers
+     * @param threads
      *            the minimum amount of worker-threads being kept alive at all
      *            time for connection handling
-     * @param maxworkers
-     *            the maximum amount of worker-threads that may be in use
-     *            concurrently for connection handling
-     * @param threshold
-     *            an amount of <code>milliseconds</code> worker-threads may be
-     *            idling before they are torn down again
      * @throws ServerSetupException
      *             any of the given ports fail to establish a
      *             socket-connection
      */
-    public TelnetServer(int[] ports, TelnetProcessor procImpl, int minworkers,
-            int maxworkers, int threshold) {
-        this(ports, procImpl,
-                new ThreadPoolExecutor(minworkers, maxworkers, threshold,
-                        TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>()));
+    public TelnetServer(int[] ports, TelnetProcessor procImpl, int threads) {
+        this(ports, procImpl, Executors.newScheduledThreadPool(threads));
     }
 
     /**
@@ -121,43 +92,53 @@ public class TelnetServer implements Closeable {
      * @param procImpl
      *            the {@link TelnetProcessor} responsible for server-logic
      * @param threadpool
-     *            a custom {@link ExecutorService} for connection-handling
+     *            a custom {@link ScheduledExecutorService} for processing
      * @throws ServerSetupException
      *             any of the given ports fail to establish a
      *             socket-connection
      */
-    public TelnetServer(int[] ports, TelnetProcessor procImpl, ExecutorService threadpool) {
-    	this.ports = Util.assignOrThrow(ports, "Passed ports-array may not be null");
-        this.threadpool = Util.assignOrThrow(threadpool, "Passed threadpool may not be null");
-        this.procImpl = Util.assignOrThrow(procImpl, "Passed TelnetProcessor may not be null");
-        
+    public TelnetServer(int[] ports, TelnetProcessor procImpl,
+            ScheduledExecutorService threadpool) {
+        this.ports = Util.assignOrThrow(ports,
+                "Passed ports-array may not be null");
+        this.threadpool = Util.assignOrThrow(threadpool,
+                "Passed threadpool may not be null");
+        this.procImpl = Util.assignOrThrow(procImpl,
+                "Passed TelnetProcessor may not be null");
+
         try {
             connectionSelector = Selector.open();
         } catch(IOException e) {
             throw new ServerSetupException(e);
         }
     }
-    
+
+    /**
+     * Starts up the server, spawning all the threads.
+     */
     public void start() {
-    	Map<ServerSocketChannel, Thread> serverSockets = new HashMap<>();
-    	for(int port : ports) {
-    		ServerSocketChannel socket;
-    		try {
-    			socket = ServerSocketChannel.open();
-    			socket.bind(new InetSocketAddress(port));
-    			socket.configureBlocking(true);
-    		} catch(IOException e) {
-    			throw new ServerSetupException(e);
-    		}
-    		
-    		Thread thread = new Thread(new PortListener(port, socket), SOCKET_THREAD_NAME + port);
-    		serverSockets.put(socket, thread);
-    		thread.start();
-    	}
-    	
-    	this.serverSockets = Collections.unmodifiableMap(serverSockets);
-    	schedule(); //get busy
-	}
+        Map<ServerSocketChannel, Thread> serverSockets = new HashMap<>();
+        for(int port : ports) {
+            ServerSocketChannel socket;
+            try {
+                socket = ServerSocketChannel.open();
+                socket.bind(new InetSocketAddress(port));
+                socket.configureBlocking(true);
+            } catch(IOException e) {
+                throw new ServerSetupException(e);
+            }
+
+            Thread thread = new Thread(new PortListener(port, socket),
+                    SOCKET_THREAD_NAME + port);
+            serverSockets.put(socket, thread);
+            thread.start();
+        }
+
+        this.serverSockets = Collections.unmodifiableMap(serverSockets);
+
+        schedulerThread = new Thread(this::schedule, SCHEDULER_THREAD_NAME);
+        schedulerThread.start();
+    }
 
     @Override
     public void close() throws IOException {
@@ -167,14 +148,16 @@ public class TelnetServer implements Closeable {
         }
 
         connectionSelector.close();
+        // TODO [high] make sure every TelnetSession has been killed and torn
+        // down
         threadpool.shutdownNow();
     }
 
     private final void schedule() {
-    	logger.info("Start scheduling");
+        logger.info("Start scheduling");
         while(connectionSelector.isOpen()) {
-        	Thread.yield();
-        	
+            Thread.yield();
+
             try {
                 connectionSelector.select();
             } catch(ClosedSelectorException e) {
@@ -188,133 +171,199 @@ public class TelnetServer implements Closeable {
                 if(!key.isValid()) {
                     continue;
                 }
-                
-            	if(!key.channel().isOpen()) {
-            		return; //already closed, it's going to die any moment
-            	}
+
+                SocketChannel channel = (SocketChannel)key.channel();
+                ConnectionData data = (ConnectionData)key.attachment();
+
+                if(!key.channel().isOpen()) {
+                    data.telSess.kill();
+                    return; // already closed, it's going to die any moment
+                }
 
                 if(key.isReadable()) {
                     threadpool.execute(() -> {
-                    	SocketChannel channel = (SocketChannel)key.channel();
-                    	ConnectionData data = (ConnectionData)key.attachment();
-                    	
-                    	try {
-                    		var bytesRead = channel.read(data.incomingBuffer);
-							if(-1 == bytesRead) {
-								channel.close();
-								logger.info("Connection to {} has been closed by the client.", channel);
-								return;
-							}
-							
-							if(0 == bytesRead) {
-								return; //nothing incoming
-							}
-							
-	                        data.incomingBuffer.flip();
-	                        
-	                        if(logger.isTraceEnabled()) {
-	                        	logger.trace("Reading from {}: {}", channel, StandardCharsets.UTF_8.decode(data.incomingBuffer).toString().trim());
-	                        }
-	                        
-	                        //TODO [high] do any telnet protocol processing here
-	                        
-	                        //pass all leftover data to the processor
-	                        data.incomingData.sink().write(data.incomingBuffer);
-	                        data.incomingBuffer.clear();
-                    	} catch (IOException e) {
-                    		logger.warn("Exception while reading from {}; Aborting connection.", channel, e);
-                    		try {
-								channel.close();
-							} catch (IOException f) {
-			                    //drop exception, just make sure it is closed
-							}
-                    	}
+                        try {
+                            var bytesRead = channel.read(data.incomingBuffer);
+                            if(-1 == bytesRead) {
+                                channel.close();
+                                logger.info(
+                                        "Connection to {} has been closed by the client.",
+                                        channel);
+                                data.telSess.kill();
+
+                                // TODO [low] cleanup logic into methods, to
+                                // reduce code duplication
+                                // make sure we trigger the execution to
+                                // finish processing the session
+                                if(data.isWaitingForInput.getAndSet(false)) {
+                                    threadpool.execute(() -> process(data));
+                                }
+
+                                return;
+                            }
+
+                            if(0 == bytesRead) {
+                                return; // nothing incoming
+                            }
+
+                            data.incomingBuffer.flip();
+
+                            if(logger.isTraceEnabled()) {
+                                logger.trace("Reading from {}: {}", channel,
+                                        StandardCharsets.UTF_8
+                                                .decode(data.incomingBuffer)
+                                                .toString().trim());
+                            }
+
+                            // TODO [high] do any telnet protocol processing
+                            // here
+
+                            // pass all leftover data to the processor
+                            data.incomingData.sink()
+                                    .write(data.incomingBuffer);
+                            data.incomingBuffer.clear();
+
+                            if(data.isWaitingForInput.getAndSet(false)) {
+                                threadpool.execute(() -> process(data));
+                            }
+                        } catch(IOException e) {
+                            logger.warn(
+                                    "Exception while reading from {}; Aborting connection.",
+                                    channel, e);
+                            try {
+                                channel.close();
+                            } catch(IOException f) {
+                                // drop exception, just make sure it is closed
+                            }
+                        }
                     });
                 }
 
                 if(key.isWritable()) {
                     threadpool.execute(() -> {
-                        SocketChannel channel = (SocketChannel)key.channel();
-                        ConnectionData data = (ConnectionData)key.attachment();
-                        
-                    	try {
-                    		data.outgoingData.source().read(data.outgoingBuffer);
-                    		data.outgoingBuffer.flip();
-                    		
-                    		if(!data.outgoingBuffer.hasRemaining()) {
-                    			return; //nothing outgoing
-                    		}
-	                        
-	                        if(logger.isTraceEnabled()) {
-	                        	logger.trace("Sending to {}: {}", channel, StandardCharsets.UTF_8.decode(data.outgoingBuffer).toString().trim());
-	                        }
-                    		
-                    		channel.write(data.outgoingBuffer);
-                    		data.outgoingBuffer.clear();
-                    	} catch (IOException e) {
-                    		logger.warn("Exception while writing to {}; Aborting connection.", channel, e);
-                    		try {
-								channel.close();
-							} catch (IOException f) {
-			                    //drop exception, just make sure it is closed
-							}
-                    	}
+                        try {
+                            data.outgoingData.source()
+                                    .read(data.outgoingBuffer);
+                            data.outgoingBuffer.flip();
+
+                            if(!data.outgoingBuffer.hasRemaining()) {
+                                return; // nothing outgoing
+                            }
+
+                            if(logger.isTraceEnabled()) {
+                                logger.trace("Sending to {}: {}", channel,
+                                        StandardCharsets.UTF_8
+                                                .decode(data.outgoingBuffer)
+                                                .toString().trim());
+                            }
+
+                            channel.write(data.outgoingBuffer);
+                            data.outgoingBuffer.clear();
+                        } catch(IOException e) {
+                            logger.warn(
+                                    "Exception while writing to {}; Aborting connection.",
+                                    channel, e);
+                            try {
+                                channel.close();
+                            } catch(IOException f) {
+                                // drop exception, just make sure it is closed
+                            }
+                        }
                     });
                 }
             }
         }
         logger.info("Stop scheduling. Selector has been closed.");
     }
-    
+
     private final class PortListener implements Runnable {
-    	private final int port;
-    	private final ServerSocketChannel socket;
 
-		public PortListener(int port, ServerSocketChannel socket) {
-			this.port = port;
-			this.socket = socket;
-		}
+        private final int port;
+        private final ServerSocketChannel socket;
 
-		@Override
-    	public void run() {
-			logger.info("Start listening for new connections on port {}", port);
-    		while(socket.isOpen()) {
-	    		SocketChannel clientConnection = null;
-	            try {
-	                clientConnection = socket.accept();
-	                clientConnection.configureBlocking(false);
-	            } catch(ClosedChannelException e) {
-	                logger.info("Socket on port {} has been closed.", port);
-	                break;
-	            } catch(IOException e) {
-	                logger.error("Failed to establish Client-Connection on port: {}", port, e);
-	            }
-	
-	            try {
-	                TelnetSession telSess = new TelnetSession(port, clientConnection.socket().getInetAddress());
-	                logger.info("New connection from {} on port {}", telSess.address(), port);
-	                clientConnection.register(connectionSelector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, new ConnectionData(telSess));
-	                connectionSelector.wakeup();
-	            } catch(ClosedChannelException e) {
-	                logger.error("Client-Connection has been closed.");
-	                continue;
-	            } catch(IOException e) {
-	                try {
-	                    clientConnection.close();
-	                } catch(IOException f) {
-	                    //drop exception, might've been closed already or never opened
-	                }
-	                
-	                logger.error("Error while trying to create local data channels. Connection aborted.");
-	                continue;
-	            }
+        public PortListener(int port, ServerSocketChannel socket) {
+            this.port = port;
+            this.socket = socket;
+        }
 
-	            // TODO schedule FIRST process-task (the rest will just keep calling each other?)
-	            // procImpl.process(data.incomingDataRead, data.outgoingDataWrite, data.telSess);
-	            // -> something with returned time, maybe work with futures?
-	        }
-    		
-    		logger.info("Stop listening for new connections on port {}", port);
-    	}
+        @Override
+        public void run() {
+            logger.info("Start listening for new connections on port {}",
+                    port);
+            while(socket.isOpen()) {
+                SocketChannel clientConnection = null;
+                try {
+                    clientConnection = socket.accept();
+                    clientConnection.configureBlocking(false);
+                } catch(ClosedChannelException e) {
+                    logger.info("Socket on port {} has been closed.", port);
+                    break;
+                } catch(IOException e) {
+                    logger.error(
+                            "Failed to establish Client-Connection on port: {}",
+                            port, e);
+                }
+
+                var telSess = new TelnetSession(port,
+                        clientConnection.socket().getInetAddress());
+                logger.info("New connection from {} on port {}",
+                        telSess.address(), port);
+
+                ConnectionData data;
+                try {
+                    data = new ConnectionData(telSess);
+                    clientConnection.register(connectionSelector,
+                            SelectionKey.OP_READ | SelectionKey.OP_WRITE,
+                            data);
+                    connectionSelector.wakeup();
+                } catch(ClosedChannelException e) {
+                    logger.error("Client-Connection has been closed.");
+                    continue;
+                } catch(IOException e) {
+                    try {
+                        clientConnection.close();
+                    } catch(IOException f) {
+                        // drop exception, might've been closed already or
+                        // never opened
+                    }
+
+                    logger.error(
+                            "Error while trying to create local data channels. Connection aborted.");
+                    continue;
+                }
+
+                threadpool.execute(() -> {
+                    procImpl.setup(data.telSess);
+                    process(data);
+                });
+
+            }
+
+            logger.info("Stop listening for new connections on port {}",
+                    port);
+        }
+    }
+
+    private final void process(ConnectionData data) {
+        if(data.telSess.wasKilled()) {
+            procImpl.teardown(data.incomingRead, data.telSess);
+            return;
+        }
+
+        var result = procImpl.process(data.incomingRead, data.outgoingWrite,
+                data.telSess);
+
+        if(-1 == result) {
+            data.isWaitingForInput.set(true);
+            return; // will be triggered by inputprocessing
+        }
+
+        if(0 < result) {
+            threadpool.schedule(() -> process(data), result,
+                    TimeUnit.MILLISECONDS);
+            return;
+        }
+
+        threadpool.execute(() -> process(data));
     }
 }

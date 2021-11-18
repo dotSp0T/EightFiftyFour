@@ -2,8 +2,8 @@ package org.crumbleworks.forge.eightfiftyfour.processing;
 
 import java.net.InetAddress;
 
-//TODO [high] add method/flag to kill the session
-//TODO [medium] add IP/Domainname to which the client session was built up (if possible?)
+// TODO [medium] add IP/Domainname to which the client session was built up
+// (if possible?)
 /**
  * Holds information about an established connection between server and
  * client. Additionally you can store your own data using the
@@ -11,7 +11,7 @@ import java.net.InetAddress;
  * <p>
  * The telnetsession object exists as long as the associated connection
  * between server and user is open and sending/receiving data.
- *
+ * 
  * @author Michael Stocker
  * @since 0.1.0
  */
@@ -20,6 +20,8 @@ public final class TelnetSession {
     private final int originalPort;
     private final InetAddress clientAddress;
     private Object data;
+
+    private boolean shouldDie = false;
 
     public TelnetSession(int originalPort, InetAddress clientAddress) {
         this.originalPort = originalPort;
@@ -58,5 +60,19 @@ public final class TelnetSession {
      */
     public final void setDataObject(Object object) {
         data = object;
+    }
+
+    /**
+     * Tell the server to kill this telnetsession.
+     */
+    public final void kill() {
+        shouldDie = true;
+    }
+
+    /**
+     * @return <code>true</code> if this telnetsession has been killed
+     */
+    public final boolean wasKilled() {
+        return shouldDie;
     }
 }
