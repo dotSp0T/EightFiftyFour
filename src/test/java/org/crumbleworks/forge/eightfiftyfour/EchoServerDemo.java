@@ -38,18 +38,19 @@ public class EchoServerDemo implements TelnetProcessor {
     public long process(InputStream in, OutputStream out,
             TelnetSession data) {
         try {
-            int availableBytes = in.available();
-            if(0 == availableBytes) {
-                logger.debug("Wait for next message");
-                return -1;
+            StringBuffer sb = new StringBuffer("Echo: ");
+            
+            int c = in.read();
+            while('\n' != c && -1 != c) {
+                sb.append((char)c);
+                c = in.read();
             }
 
-            logger.debug("Writing to {}", data.address());
-
+            logger.debug("Writing '{}' to {}", sb.toString(), data.address());
+            
             var writer = new OutputStreamWriter(out);
-            writer.write("Echo: ");
-            out.write(in.readNBytes(availableBytes));
-            writer.write('\n');
+            writer.write(sb.toString());
+            writer.flush();
         } catch(IOException e) {
             throw new RuntimeException(e);
         }

@@ -180,100 +180,95 @@ public class TelnetServer implements Closeable {
                     return; // already closed, it's going to die any moment
                 }
 
+                //TODO lock READ to once at a time; drop others
                 if(key.isReadable()) {
-                    threadpool.execute(() -> {
-                        try {
-                            var bytesRead = channel.read(data.incomingBuffer);
-                            if(-1 == bytesRead) {
-                                channel.close();
-                                logger.info(
-                                        "Connection to {} has been closed by the client.",
-                                        channel);
-                                data.telSess.kill();
-
-                                // TODO [low] cleanup logic into methods, to
-                                // reduce code duplication
-                                // make sure we trigger the execution to
-                                // finish processing the session
-                                if(data.isWaitingForInput.getAndSet(false)) {
-                                    threadpool.execute(() -> process(data));
-                                }
-
-                                return;
-                            }
-
-                            if(0 == bytesRead) {
-                                return; // nothing incoming
-                            }
-
-                            data.incomingBuffer.flip();
-
-                            if(logger.isTraceEnabled()) {
-                                logger.trace("Reading from {}: {}", channel,
-                                        StandardCharsets.UTF_8
-                                                .decode(data.incomingBuffer)
-                                                .toString().trim());
-                            }
-
-                            // TODO [high] do any telnet protocol processing
-                            // here
-
-                            // pass all leftover data to the processor
-                            data.incomingData.sink()
-                                    .write(data.incomingBuffer);
-                            data.incomingBuffer.clear();
-
-                            if(data.isWaitingForInput.getAndSet(false)) {
-                                threadpool.execute(() -> process(data));
-                            }
-                        } catch(IOException e) {
-                            logger.warn(
-                                    "Exception while reading from {}; Aborting connection.",
-                                    channel, e);
-                            try {
-                                channel.close();
-                            } catch(IOException f) {
-                                // drop exception, just make sure it is closed
-                            }
-                        }
-                    });
+                    threadpool.execute(() -> incomingRead(channel, data));
                 }
 
+                //TODO lock WRITE to once at a time; drop others
                 if(key.isWritable()) {
-                    threadpool.execute(() -> {
-                        try {
-                            data.outgoingData.source()
-                                    .read(data.outgoingBuffer);
-                            data.outgoingBuffer.flip();
-
-                            if(!data.outgoingBuffer.hasRemaining()) {
-                                return; // nothing outgoing
-                            }
-
-                            if(logger.isTraceEnabled()) {
-                                logger.trace("Sending to {}: {}", channel,
-                                        StandardCharsets.UTF_8
-                                                .decode(data.outgoingBuffer)
-                                                .toString().trim());
-                            }
-
-                            channel.write(data.outgoingBuffer);
-                            data.outgoingBuffer.clear();
-                        } catch(IOException e) {
-                            logger.warn(
-                                    "Exception while writing to {}; Aborting connection.",
-                                    channel, e);
-                            try {
-                                channel.close();
-                            } catch(IOException f) {
-                                // drop exception, just make sure it is closed
-                            }
-                        }
-                    });
+                    threadpool.execute(() -> outgoingWrite(channel, data));
                 }
             }
         }
         logger.info("Stop scheduling. Selector has been closed.");
+    }
+
+    private final void incomingRead(SocketChannel channel, ConnectionData data) {
+        try {
+            var bytesRead = channel.read(data.incomingBuffer);
+            if(-1 == bytesRead) {
+                channel.close();
+                logger.info("Connection to {} has been closed by the client.", channel);
+                data.telSess.kill();
+
+                // TODO [low] cleanup logic into methods, to reduce code duplication make sure we trigger the execution to finish processing the session
+                if(data.isWaitingForInput.getAndSet(false)) {
+                    threadpool.execute(() -> process(data));
+                }
+
+                return;
+            }
+
+            if(0 == bytesRead) {
+                return; // nothing incoming
+            }
+
+            data.incomingBuffer.flip();
+
+            if(logger.isTraceEnabled()) {
+                int prevPos = data.incomingBuffer.position();
+                logger.trace("Reading from {}: {}", channel.getRemoteAddress(), StandardCharsets.UTF_8.decode(data.incomingBuffer).toString().trim());
+                data.incomingBuffer.position(prevPos);
+            }
+
+            // TODO [high] do any telnet protocol processing here
+
+            // pass all leftover data to the processor
+            data.incomingData.sink().write(data.incomingBuffer);
+            data.incomingBuffer.clear();
+
+            if(data.isWaitingForInput.getAndSet(false)) {
+                threadpool.execute(() -> process(data));
+            }
+        } catch(IOException e) {
+            logger.warn("Exception while reading from {}; Aborting connection.", channel, e);
+            try {
+                channel.close();
+            } catch(IOException f) {
+                // drop exception, just make sure it is closed
+            }
+        }
+    }
+    
+    private void outgoingWrite(SocketChannel channel, ConnectionData data) {
+        try {
+            data.outgoingData.source().read(data.outgoingBuffer);
+            data.outgoingBuffer.flip();
+
+            if(!data.outgoingBuffer.hasRemaining()) {
+                return; // nothing outgoing
+            }
+            System.out.println(">>> 1 pos: " + data.outgoingBuffer.position() + "; limit: " + data.outgoingBuffer.limit());
+
+            if(logger.isTraceEnabled()) {
+                int prevPos = data.outgoingBuffer.position();
+                logger.trace("Sending to {}: {}", channel.getRemoteAddress(), StandardCharsets.UTF_8.decode(data.outgoingBuffer).toString().trim());
+                data.outgoingBuffer.position(prevPos);
+            }
+            System.out.println(">>> 2 pos: " + data.outgoingBuffer.position() + "; limit: " + data.outgoingBuffer.limit());
+
+            channel.write(data.outgoingBuffer);
+            data.outgoingBuffer.clear();
+            System.out.println(">>> 3 pos: " + data.outgoingBuffer.position() + "; limit: " + data.outgoingBuffer.limit());
+        } catch(IOException e) {
+            logger.warn("Exception while writing to {}; Aborting connection.", channel, e);
+            try {
+                channel.close();
+            } catch(IOException f) {
+                // drop exception, just make sure it is closed
+            }
+        }
     }
 
     private final class PortListener implements Runnable {
